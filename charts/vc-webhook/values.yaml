@@ -1,0 +1,6 @@
+image:
+  repository: vc-webhook
+  tag: latest
+service:
+  port: 443
+verifierURL: http://issuer-api:8000/vc/verify
