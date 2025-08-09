@@ -1,0 +1,21 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: vc-webhook
+webhooks:
+- name: vc-webhook.default.svc
+  admissionReviewVersions: ["v1"]
+  sideEffects: None
+  failurePolicy: Fail
+  clientConfig:
+    service:
+      name: vc-webhook
+      namespace: default
+      path: /validate
+      port: {{ .Values.service.port }}
+    caBundle: {{ .Values.caBundle | default "" | quote }}
+  rules:
+  - apiGroups: [""]
+    apiVersions: ["v1"]
+    operations: ["CREATE"]
+    resources: ["pods"]

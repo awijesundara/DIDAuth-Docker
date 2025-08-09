@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vc-webhook
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vc-webhook
+  template:
+    metadata:
+      labels:
+        app: vc-webhook
+    spec:
+      containers:
+      - name: vc-webhook
+        image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+        env:
+        - name: VERIFIER_URL
+          value: {{ .Values.verifierURL | quote }}
+        ports:
+        - containerPort: 8443
+        volumeMounts:
+        - name: tls
+          mountPath: /tls
+      volumes:
+      - name: tls
+        secret:
+          secretName: vc-webhook-tls

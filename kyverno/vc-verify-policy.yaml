@@ -1,0 +1,25 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-vc
+spec:
+  validationFailureAction: Enforce
+  rules:
+  - name: check-vc
+    match:
+      resources:
+        kinds: [Pod]
+    context:
+    - name: vcresp
+      apiCall:
+        url: "http://issuer-api.default.svc:8000/vc/verify"
+        method: POST
+        data:
+          manifest_digest: "{{ request.object.metadata.annotations['vc.manifestDigest'] }}"
+          contract_address: "{{ request.object.metadata.annotations['vc.contractAddress'] }}"
+          vc_cid: "{{ request.object.metadata.annotations['vc.cid'] }}"
+    validate:
+      message: "VC verification failed"
+      pattern:
+        vcresp:
+          valid: true
