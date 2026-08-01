@@ -6,9 +6,9 @@
     "deploy:arb": "hardhat run scripts/deploy.ts --network arbitrumSepolia"
   },
   "devDependencies": {
-    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
-    "dotenv": "^16.4.5",
-    "hardhat": "^2.22.10",
-    "typescript": "^5.5.4"
+    "@nomicfoundation/hardhat-toolbox": "^6.1.2",
+    "dotenv": "^17.4.2",
+    "hardhat": "^2.29.0",
+    "typescript": "^5.9.3"
   }
 }
