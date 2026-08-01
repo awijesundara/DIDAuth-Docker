@@ -1,3 +1,4 @@
+import hmac
 import os, time
 from fastapi import FastAPI, HTTPException, Header, Response
 from pydantic import BaseModel
@@ -49,7 +50,10 @@ class RotateReq(BaseModel):
     new_key: str
 
 def require_api_key(x_api_key: str | None):
-    if x_api_key != API_KEY:
+    # Use a constant-time comparison: a plain `!=` short-circuits on the
+    # first mismatching byte, which leaks timing information an attacker
+    # can use to recover the key byte-by-byte.
+    if x_api_key is None or not hmac.compare_digest(x_api_key, API_KEY):
         raise HTTPException(status_code=401, detail="invalid api key")
 
 @app.post("/did/register")
