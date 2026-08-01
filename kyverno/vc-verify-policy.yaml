@@ -12,7 +12,7 @@ spec:
     context:
     - name: vcresp
       apiCall:
-        url: "http://issuer-api.default.svc:8000/vc/verify"
+        url: "http://issuer-api.default.svc:8080/vc/verify"
         method: POST
         data:
           manifest_digest: "{{ request.object.metadata.annotations['vc.manifestDigest'] }}"
