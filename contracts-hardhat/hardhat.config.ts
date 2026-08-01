@@ -4,7 +4,7 @@ import * as dotenv from "dotenv";
 dotenv.config();
 
 const config: HardhatUserConfig = {
-  solidity: "0.8.21",
+  solidity: "0.8.28",
   networks: {
     arbitrumSepolia: {
       url: process.env.ARBITRUM_SEPOLIA_RPC!,
