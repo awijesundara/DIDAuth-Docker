@@ -3,4 +3,4 @@ image:
   tag: latest
 service:
   port: 443
-verifierURL: http://issuer-api:8000/vc/verify
+verifierURL: http://issuer-api:8080/vc/verify

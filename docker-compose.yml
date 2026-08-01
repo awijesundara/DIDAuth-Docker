@@ -1,0 +1,24 @@
+services:
+  ipfs:
+    image: ipfs/kubo:latest
+    container_name: didauth-ipfs
+    ports:
+      - "5001:5001"   # IPFS HTTP API
+      - "8081:8080"   # IPFS gateway
+    volumes:
+      - ipfs-data:/data/ipfs
+
+  issuer-api:
+    build: ./issuer-api
+    container_name: didauth-issuer-api
+    ports:
+      - "8080:8080"
+    env_file:
+      - ./issuer-api/.env
+    environment:
+      IPFS_API: http://ipfs:5001/api/v0
+    depends_on:
+      - ipfs
+
+volumes:
+  ipfs-data:
