@@ -2,6 +2,9 @@ import os
 from web3 import Web3
 from eth_account import Account
 
+# Ethereum RPC calls the contract with keccak-hashed content, so we can
+# safely use Web3.keccak for any-length identifiers here.
+
 ABI = [
   {"inputs":[{"internalType":"bytes32","name":"issuerDid","type":"bytes32"},
              {"internalType":"bytes32","name":"didDocCid","type":"bytes32"}],
@@ -30,8 +33,17 @@ def connect():
     return w3, c, acct
 
 def to_bytes32(s: str) -> bytes:
-    b = s.encode()
-    return (b + b'\x00'*32)[:32]
+    """Deterministically map an arbitrary-length identifier (DID, IPFS CID,
+    vc_id, ...) to a bytes32 for on-chain storage.
+
+    This must hash rather than truncate: vc_ids are "vcid:" + 64 hex chars
+    (69 bytes) and IPFS CIDs commonly exceed 32 bytes too, so naive
+    truncation to the first 32 bytes silently discards most of the entropy.
+    Two different vc_ids/CIDs that share a 32-byte prefix would then collide
+    on-chain, causing spurious "already recorded" reverts or, worse, VCs
+    resolving to the wrong recorded/revoked state.
+    """
+    return Web3.keccak(text=s)
 
 def tx_send(w3, acct, tx):
     tx.update({"nonce": w3.eth.get_transaction_count(acct.address)})

@@ -1,13 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
-	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
-	"strings"
+	"time"
 
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -18,14 +17,38 @@ type verifyResp struct {
 	Valid bool `json:"valid"`
 }
 
+type verifyReq struct {
+	ManifestDigest  string `json:"manifest_digest"`
+	ContractAddress string `json:"contract_address"`
+	VCCid           string `json:"vc_cid"`
+}
+
+// httpClient bounds how long a single verification call may take. Without a
+// timeout, an unresponsive issuer-api would hang the admission request
+// indefinitely; the API server's own webhook timeout would eventually fail
+// the request, but a local timeout lets us fail fast and produces a clearer
+// error message.
+var httpClient = &http.Client{Timeout: 5 * time.Second}
+
 func verify(vcCID, digest, contract string) (bool, error) {
 	url := os.Getenv("VERIFIER_URL")
-	payload := fmt.Sprintf(`{"manifest_digest":"%s","contract_address":"%s","vc_cid":"%s"}`, digest, contract, vcCID)
-	resp, err := http.Post(url, "application/json", io.NopCloser(strings.NewReader(payload)))
+	// Build the request body with encoding/json rather than string
+	// formatting: pod annotations are attacker-controlled (any user who can
+	// create a pod controls them), so naively interpolating them into a
+	// JSON string literal would let a value containing a `"` inject
+	// arbitrary fields into the verifier request.
+	body, err := json.Marshal(verifyReq{ManifestDigest: digest, ContractAddress: contract, VCCid: vcCID})
+	if err != nil {
+		return false, err
+	}
+	resp, err := httpClient.Post(url, "application/json", bytes.NewReader(body))
 	if err != nil {
 		return false, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false, nil
+	}
 	var out verifyResp
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return false, err
