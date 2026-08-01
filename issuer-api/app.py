@@ -86,7 +86,9 @@ def issue(req: IssueReq, x_api_key: str | None = Header(None)):
 def record(req: RecordReq, x_api_key: str | None = Header(None)):
     require_api_key(x_api_key)
     w3, c, acct = connect()
-    tx = c.functions.recordVC(to_bytes32(req.vc_id), STATE["issuerDidB32"], to_bytes32(req.vc_cid))         .build_transaction({"from": acct.address})
+    tx = c.functions.recordVC(
+        to_bytes32(req.vc_id), STATE["issuerDidB32"], to_bytes32(req.vc_cid)
+    ).build_transaction({"from": acct.address})
     r = tx_send(w3, acct, tx)
     return {"status": "recorded", "tx": r.transactionHash.hex()}
 
