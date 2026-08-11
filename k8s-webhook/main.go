@@ -3,9 +3,11 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	admissionv1 "k8s.io/api/admission/v1"
@@ -20,6 +22,7 @@ type verifyResp struct {
 type verifyReq struct {
 	ManifestDigest  string `json:"manifest_digest"`
 	ContractAddress string `json:"contract_address"`
+	ChainID         int64  `json:"chain_id"`
 	VCCid           string `json:"vc_cid"`
 }
 
@@ -30,14 +33,14 @@ type verifyReq struct {
 // error message.
 var httpClient = &http.Client{Timeout: 5 * time.Second}
 
-func verify(vcCID, digest, contract string) (bool, error) {
+func verify(vcCID, digest, contract string, chainID int64) (bool, error) {
 	url := os.Getenv("VERIFIER_URL")
 	// Build the request body with encoding/json rather than string
 	// formatting: pod annotations are attacker-controlled (any user who can
 	// create a pod controls them), so naively interpolating them into a
 	// JSON string literal would let a value containing a `"` inject
 	// arbitrary fields into the verifier request.
-	body, err := json.Marshal(verifyReq{ManifestDigest: digest, ContractAddress: contract, VCCid: vcCID})
+	body, err := json.Marshal(verifyReq{ManifestDigest: digest, ContractAddress: contract, ChainID: chainID, VCCid: vcCID})
 	if err != nil {
 		return false, err
 	}
@@ -71,12 +74,24 @@ func admit(w http.ResponseWriter, r *http.Request) {
 	vcCID := ann["vc.cid"]
 	digest := ann["vc.manifestDigest"]
 	contract := ann["vc.contractAddress"]
-	ok, err := verify(vcCID, digest, contract)
-	allow := ok && err == nil
+	chainIDStr := ann["vc.chainId"]
+	var ok bool
+	var err error
 	var message string
-	if err != nil {
-		message = err.Error()
+	// CBC = (chainId, contractAddress): a pod missing or mangling the
+	// chainId annotation must be denied, not silently verified against
+	// contract address alone -- that would reopen the exact cross-chain
+	// replay the chain_id field exists to close.
+	chainID, convErr := strconv.ParseInt(chainIDStr, 10, 64)
+	if convErr != nil {
+		message = fmt.Sprintf("invalid or missing vc.chainId annotation: %v", convErr)
+	} else {
+		ok, err = verify(vcCID, digest, contract, chainID)
+		if err != nil {
+			message = err.Error()
+		}
 	}
+	allow := ok && err == nil && convErr == nil
 	response := admissionv1.AdmissionReview{
 		TypeMeta: metav1.TypeMeta{APIVersion: review.APIVersion, Kind: review.Kind},
 		Response: &admissionv1.AdmissionResponse{
