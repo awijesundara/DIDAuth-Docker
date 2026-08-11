@@ -50,8 +50,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-    env:
-      IMAGE_NAME: ${{ github.repository }}/vc-webhook
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -60,6 +58,11 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set lowercase image name
+        # ghcr.io tags must be all-lowercase; github.repository preserves
+        # the repo's actual case (DIDAuth-Docker), which docker/build-push
+        # rejects outright ("repository name must be lowercase").
+        run: echo "IMAGE_NAME=$(echo '${{ github.repository }}/vc-webhook' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
       - uses: docker/build-push-action@v6
         with:
           context: k8s-webhook
