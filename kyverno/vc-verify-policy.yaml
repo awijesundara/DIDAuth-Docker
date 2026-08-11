@@ -17,6 +17,7 @@ spec:
         data:
           manifest_digest: "{{ request.object.metadata.annotations['vc.manifestDigest'] }}"
           contract_address: "{{ request.object.metadata.annotations['vc.contractAddress'] }}"
+          chain_id: "{{ request.object.metadata.annotations['vc.chainId'] }}"
           vc_cid: "{{ request.object.metadata.annotations['vc.cid'] }}"
     validate:
       message: "VC verification failed"
