@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "build": "hardhat compile",
+    "test": "hardhat test",
     "deploy:arb": "hardhat run scripts/deploy.ts --network arbitrumSepolia"
   },
   "devDependencies": {

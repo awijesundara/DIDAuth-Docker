@@ -23,11 +23,27 @@ ABI = [
    "stateMutability":"view","type":"function"},
   {"inputs":[{"internalType":"bytes32","name":"vcId","type":"bytes32"}],
    "name":"getVCIssuer","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],
+   "stateMutability":"view","type":"function"},
+  {"inputs":[{"internalType":"bytes32","name":"issuerDid","type":"bytes32"}],
+   "name":"didCid","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],
+   "stateMutability":"view","type":"function"},
+  {"inputs":[{"internalType":"bytes32","name":"vcId","type":"bytes32"}],
+   "name":"isVCValid","outputs":[{"internalType":"bool","name":"","type":"bool"}],
+   "stateMutability":"view","type":"function"},
+  {"inputs":[{"internalType":"bytes32","name":"vcId","type":"bytes32"}],
+   "name":"getVCRecord","outputs":[{"components":[
+      {"internalType":"bytes32","name":"issuerDid","type":"bytes32"},
+      {"internalType":"bytes32","name":"ipfsCid","type":"bytes32"},
+      {"internalType":"uint64","name":"issuanceTimestamp","type":"uint64"},
+      {"internalType":"bool","name":"recorded","type":"bool"},
+      {"internalType":"bool","name":"revoked","type":"bool"}],
+    "internalType":"struct DIDRegistry.VCRecord","name":"","type":"tuple"}],
    "stateMutability":"view","type":"function"}
 ]
 
 def connect():
-    w3 = Web3(Web3.HTTPProvider(os.getenv("RPC_URL")))
+    timeout = float(os.getenv("EXTERNAL_REQUEST_TIMEOUT_SECS", "5"))
+    w3 = Web3(Web3.HTTPProvider(os.getenv("RPC_URL"), request_kwargs={"timeout": timeout}))
     c = w3.eth.contract(address=os.getenv("CONTRACT_ADDRESS"), abi=ABI)
     acct = Account.from_key(os.getenv("DEPLOYER_PK")) if os.getenv("DEPLOYER_PK") else None
     return w3, c, acct

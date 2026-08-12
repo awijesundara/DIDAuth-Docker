@@ -5,9 +5,8 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 from cachetools import TTLCache
 from prometheus_client import Counter, Histogram, generate_latest
-from web3 import Web3
-from did_utils import new_did
-from vc_utils import make_vc, sign_vc, verify_vc, vc_id_from_payload, VC
+from did_utils import new_did, public_key_multibase, public_key_from_multibase
+from vc_utils import make_vc, sign_vc, verify_vc, vc_id_from_payload, parse_vc_time, proof_options, VC
 from ipfs_utils import init as ipfs_init, add_json, cat
 from chain_utils import connect, to_bytes32, tx_send
 from signer import LocalSigner, KMSSigner
@@ -17,18 +16,24 @@ load_dotenv()
 ipfs_init(os.getenv("IPFS_API"))
 API_KEY = load_api_key()
 CONTRACT_ADDRESS = os.getenv("CONTRACT_ADDRESS")
-# Clock-skew allowance for issuedAt/expiration checks, matching the
+if not CONTRACT_ADDRESS:
+    raise RuntimeError("CONTRACT_ADDRESS is required")
+# Clock-skew allowance for issuanceDate/expirationDate checks, matching the
 # manuscript's delta=5s -- verifier and issuer clocks are assumed
 # NTP-synchronized but not identical to the second.
-CLOCK_SKEW_SECS = 5
+CLOCK_SKEW_SECS = int(os.getenv("CLOCK_SKEW_SECS", "5"))
 
-app = FastAPI(title="DID Docker VC Issuer/Verifier")
+app = FastAPI(
+    title="CBC-Provenance Issuer and Verifier",
+    description="Contract-bound OCI image provenance for Kubernetes admission.",
+    version="1.0.0",
+)
 
 STATE = {"did": None, "seckey": None, "pubkey": None, "issuerDidB32": None,
          "didCidB32": None, "didDocCid": None, "signer": None}
 _CHAIN_ID_CACHE = {"value": None}
 
-REV_CACHE = TTLCache(maxsize=1024, ttl=30)
+REV_CACHE = TTLCache(maxsize=1024, ttl=int(os.getenv("REVOCATION_CACHE_TTL_SECS", "30")))
 VERIFY_REQS = Counter("vc_verify_requests_total", "Total VC verification requests")
 VERIFY_FAILS = Counter("vc_verify_failures_total", "VC verification failures")
 VERIFY_DUR = Histogram("vc_verify_duration_seconds", "VC verification duration")
@@ -39,7 +44,8 @@ class DIDRegisterReq(BaseModel):
 
 class IssueReq(BaseModel):
     manifest_digest: str
-    contract_address: str
+    image_reference: str | None = None
+    build_metadata: dict | None = None
 
 class RecordReq(BaseModel):
     vc_cid: str
@@ -47,8 +53,6 @@ class RecordReq(BaseModel):
 
 class VerifyReq(BaseModel):
     manifest_digest: str
-    contract_address: str
-    chain_id: int
     vc_cid: str
 
 class RevokeReq(BaseModel):
@@ -69,7 +73,10 @@ def get_chain_id() -> int:
 def _extract_pubkey_from_doc(did_doc: dict) -> str | None:
     methods = did_doc.get("verificationMethod") or []
     if methods and isinstance(methods, list) and isinstance(methods[0], dict):
-        return methods[0].get("publicKeyBase64")
+        method = methods[0]
+        if method.get("publicKeyMultibase"):
+            return public_key_from_multibase(method["publicKeyMultibase"])
+        return method.get("publicKeyBase64")
     return None
 
 def require_api_key(x_api_key: str | None):
@@ -96,13 +103,15 @@ def did_register(req: DIDRegisterReq, x_api_key: str | None = Header(None)):
     # match. Extra caller-supplied fields (e.g. service endpoints) are
     # preserved; id/verificationMethod are always overwritten.
     did_doc = dict(req.did_doc)
+    did_doc["@context"] = ["https://www.w3.org/ns/did/v1"]
     did_doc["id"] = dk.did
     did_doc["verificationMethod"] = [{
         "id": f"{dk.did}#key-1",
         "type": "Ed25519VerificationKey2020",
         "controller": dk.did,
-        "publicKeyBase64": dk.pubkey_b64,
+        "publicKeyMultibase": public_key_multibase(dk.pubkey_b64),
     }]
+    did_doc["assertionMethod"] = [f"{dk.did}#key-1"]
     cid = add_json(did_doc)
     STATE["did"] = dk.did
     STATE["seckey"] = dk.seckey_b64
@@ -125,22 +134,38 @@ def issue(req: IssueReq, x_api_key: str | None = Header(None)):
     # actually anchoring this VC's lifecycle on, not a value the caller
     # could otherwise spoof.
     payload = make_vc(
-        STATE["did"], STATE["pubkey"], req.manifest_digest, req.contract_address,
-        get_chain_id(), STATE["didDocCid"],
+        STATE["did"], req.manifest_digest, CONTRACT_ADDRESS,
+        get_chain_id(), STATE["didDocCid"], req.image_reference, req.build_metadata,
     )
     vc = sign_vc(STATE["signer"], payload)
-    obj = {"vcId": vc.vc_id, "vc": vc.payload, "proof": {"type":"Ed25519Signature2020","sigBase64": vc.signature}}
+    obj = {
+        "vcId": vc.vc_id,
+        "vc": vc.payload,
+        "proof": {**proof_options(vc.payload), "proofValue": vc.signature},
+    }
     vc_cid = add_json(obj)
     return {"vc_id": vc.vc_id, "ipfs_cid": vc_cid, "vc": obj}
 
 @app.post("/vc/record")
 def record(req: RecordReq, x_api_key: str | None = Header(None)):
     require_api_key(x_api_key)
+    if not STATE["issuerDidB32"]:
+        raise HTTPException(400, "register DID first")
+    try:
+        stored = cat(req.vc_cid)
+        payload = stored["vc"]
+    except Exception as exc:
+        raise HTTPException(400, "cannot retrieve credential") from exc
+    if vc_id_from_payload(payload) != req.vc_id:
+        raise HTTPException(400, "VC identifier does not match canonical payload")
+    if payload.get("issuer") != STATE["did"]:
+        raise HTTPException(400, "credential issuer does not match registered DID")
     w3, c, acct = connect()
     tx = c.functions.recordVC(
         to_bytes32(req.vc_id), STATE["issuerDidB32"], to_bytes32(req.vc_cid)
     ).build_transaction({"from": acct.address})
     r = tx_send(w3, acct, tx)
+    REV_CACHE.pop(req.vc_id, None)
     return {"status": "recorded", "tx": r.transactionHash.hex()}
 
 @app.post("/vc/revoke")
@@ -149,6 +174,7 @@ def revoke(req: RevokeReq, x_api_key: str | None = Header(None)):
     w3, c, acct = connect()
     tx = c.functions.revokeVC(to_bytes32(req.vc_id)).build_transaction({"from": acct.address})
     r = tx_send(w3, acct, tx)
+    REV_CACHE.pop(req.vc_id, None)
     return {"status":"revoked","tx": r.transactionHash.hex()}
 
 @app.post("/apikey/rotate")
@@ -177,25 +203,42 @@ def verify(req: VerifyReq):
         # actual payload content.
         payload = obj["vc"]
         vc_id = vc_id_from_payload(payload)
-        V = VC(vc_id=vc_id, payload=payload, signature=obj["proof"]["sigBase64"])
-        if not verify_vc(V):
-            raise HTTPException(400, "bad signature")
+        proof = obj.get("proof") or {}
+        supplied_options = {key: value for key, value in proof.items() if key != "proofValue"}
+        if supplied_options != proof_options(payload):
+            raise HTTPException(400, "unsupported proof")
+        V = VC(vc_id=vc_id, payload=payload, signature=proof["proofValue"])
         subject = V.payload["credentialSubject"]
-        if subject["manifestDigest"] != req.manifest_digest:
+        issuer_did = V.payload["issuer"]
+        did_doc_cid = subject.get("didDocCid")
+        if not did_doc_cid:
+            raise HTTPException(400, "missing didDocCid")
+        w3, c, _ = connect()
+        if c.functions.didCid(to_bytes32(issuer_did)).call() != to_bytes32(did_doc_cid):
+            raise HTTPException(400, "DID document CID does not match on-chain registration")
+        did_doc = cat(did_doc_cid)
+        doc_pubkey = _extract_pubkey_from_doc(did_doc)
+        if not doc_pubkey or not verify_vc(V, doc_pubkey):
+            raise HTTPException(400, "bad signature")
+        image = subject.get("image") or {}
+        cbc = subject.get("cbc") or {}
+        if image.get("manifestDigest") != req.manifest_digest:
             raise HTTPException(400, "digest mismatch")
-        if subject["contractAddress"].lower() != req.contract_address.lower():
+        # CBCexp is operator-controlled configuration. It must never be
+        # supplied by a Pod or another untrusted verification caller.
+        if cbc.get("contractAddress", "").lower() != CONTRACT_ADDRESS.lower():
             raise HTTPException(400, "contract mismatch")
         # CBC = (chainId, contractAddress): contract-address equality alone
         # is not replay-resistant across chains that happen to reuse the
         # same address (e.g. via CREATE2, or simple coincidence on two
         # independent testnets) -- both halves of the pair must match the
         # verifier's own expected context.
-        if subject.get("chainId") != req.chain_id:
+        if cbc.get("chainId") != get_chain_id():
             raise HTTPException(400, "chain mismatch")
         now = int(time.time())
-        if now + CLOCK_SKEW_SECS < V.payload["issuedAt"]:
+        if now + CLOCK_SKEW_SECS < parse_vc_time(V.payload["issuanceDate"]):
             raise HTTPException(400, "not yet valid")
-        if now >= V.payload["expiration"] + CLOCK_SKEW_SECS:
+        if now >= parse_vc_time(V.payload["expirationDate"]) + CLOCK_SKEW_SECS:
             raise HTTPException(400, "expired")
 
         cached = REV_CACHE.get(vc_id)
@@ -211,34 +254,29 @@ def verify(req: VerifyReq):
         if not recorded:
             return {"vc_id": vc_id, "recorded": recorded, "revoked": revoked, "valid": False}
 
-        # DID-integrity tie-back: confirm (a) this vcId was actually
-        # recorded under the issuer DID the VC itself claims, and (b) the
-        # signing key embedded in the VC matches the key published in the
-        # DID Document that this issuer registered on-chain -- not merely
-        # a key of the attacker's choosing embedded in a well-formed VC.
+        # Confirm that the membership record belongs to the signed issuer and
+        # points to the same content-addressed VC supplied for verification.
         w3, c, _ = connect()
-        issuer_did = V.payload["issuer"]
         recorded_issuer_hash = c.functions.getVCIssuer(to_bytes32(vc_id)).call()
         if recorded_issuer_hash != to_bytes32(issuer_did):
             raise HTTPException(400, "VC issuer does not match on-chain record")
-        did_doc_cid = subject.get("didDocCid")
-        if not did_doc_cid:
-            raise HTTPException(400, "missing didDocCid")
-        on_chain_doc_hash = c.functions.didCid(recorded_issuer_hash).call()
-        if on_chain_doc_hash != Web3.keccak(text=did_doc_cid):
-            raise HTTPException(400, "DID document CID does not match on-chain registration")
-        did_doc = cat(did_doc_cid)
-        doc_pubkey = _extract_pubkey_from_doc(did_doc)
-        if not doc_pubkey or doc_pubkey != subject["issuerPublicKeyBase64"]:
-            raise HTTPException(400, "VC signing key not bound to registered DID document")
-
+        record = c.functions.getVCRecord(to_bytes32(vc_id)).call()
+        if record[1] != to_bytes32(req.vc_cid):
+            raise HTTPException(400, "VC CID does not match on-chain record")
         return {"vc_id": vc_id, "recorded": recorded, "revoked": revoked, "valid": recorded and not revoked}
     except HTTPException:
         VERIFY_FAILS.inc()
         raise
+    except Exception as exc:
+        VERIFY_FAILS.inc()
+        raise HTTPException(400, "credential verification failed closed") from exc
     finally:
         VERIFY_DUR.observe(time.time() - start)
 
 @app.get("/metrics")
 def metrics():
     return Response(generate_latest(), media_type="text/plain")
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}

@@ -1,6 +1,8 @@
-import json, time
+import time
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from web3 import Web3
+from pyld import jsonld
 from did_utils import verify_ed25519
 from signer import Signer
 
@@ -10,64 +12,93 @@ class VC:
     payload: dict
     signature: str
 
-def canonicalize(payload: dict) -> bytes:
-    """Deterministic serialization used for both vc_id hashing and the
-    signed body. Sorted keys make the encoding independent of dict
-    insertion order/JSON library, unlike the previous separators-only
-    json.dumps -- two structurally identical VCs built by different
-    clients (or the same client on different Python versions) must hash
-    and sign to the exact same bytes, or vc_id becomes non-reproducible
-    and cross-implementation verification breaks.
+_VC_CONTEXT = {
+    "id": "@id", "type": "@type",
+    "VerifiableCredential": "https://www.w3.org/2018/credentials#VerifiableCredential",
+    "ContainerImageCredential": "https://w3id.org/cbc-provenance#ContainerImageCredential",
+    "issuer": {"@id": "https://www.w3.org/2018/credentials#issuer", "@type": "@id"},
+    "issuanceDate": {"@id": "https://www.w3.org/2018/credentials#issuanceDate", "@type": "http://www.w3.org/2001/XMLSchema#dateTime"},
+    "expirationDate": {"@id": "https://www.w3.org/2018/credentials#expirationDate", "@type": "http://www.w3.org/2001/XMLSchema#dateTime"},
+    "credentialSubject": "https://www.w3.org/2018/credentials#credentialSubject",
+    "image": "https://w3id.org/cbc-provenance#image",
+    "manifestDigest": "https://w3id.org/cbc-provenance#manifestDigest",
+    "reference": "https://w3id.org/cbc-provenance#reference",
+    "cbc": "https://w3id.org/cbc-provenance#contractBindingContext",
+    "chainId": {"@id": "https://w3id.org/cbc-provenance#chainId", "@type": "http://www.w3.org/2001/XMLSchema#integer"},
+    "contractAddress": "https://w3id.org/cbc-provenance#contractAddress",
+    "didDocCid": "https://w3id.org/cbc-provenance#didDocumentCid",
+    "buildMetadata": {"@id": "https://w3id.org/cbc-provenance#buildMetadata", "@type": "@json"},
+    "proof": "https://w3id.org/security#proof",
+    "Ed25519Signature2020": "https://w3id.org/security#Ed25519Signature2020",
+    "created": {"@id": "http://purl.org/dc/terms/created", "@type": "http://www.w3.org/2001/XMLSchema#dateTime"},
+    "verificationMethod": {"@id": "https://w3id.org/security#verificationMethod", "@type": "@id"},
+    "proofPurpose": {"@id": "https://w3id.org/security#proofPurpose", "@type": "@vocab"},
+    "assertionMethod": "https://w3id.org/security#assertionMethod",
+}
 
-    This is a JCS-style canonical JSON encoding, not full JSON-LD/RDF
-    URDNA2015 canonicalization (which requires resolving the VC's
-    @context through an RDF processor). The payload here carries no
-    @context-driven RDF semantics -- it is a fixed, flat schema -- so
-    sorted-key canonical JSON gives the same reproducibility guarantee
-    URDNA2015 would, without pulling in a JSON-LD dependency this schema
-    doesn't otherwise need.
-    """
-    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+def _document_loader(url, options=None):
+    if url == "https://www.w3.org/2018/credentials/v1":
+        return {"contextUrl": None, "documentUrl": url, "document": {"@context": _VC_CONTEXT}}
+    raise ValueError(f"remote JSON-LD context is not allowed: {url}")
+
+def canonicalize(payload: dict) -> bytes:
+    """URDNA2015-normalize the proof-free VC to canonical N-Quads."""
+    normalized = jsonld.normalize(payload, {
+        "algorithm": "URDNA2015",
+        "format": "application/n-quads",
+        "documentLoader": _document_loader,
+    })
+    return normalized.encode("utf-8")
 
 def vc_id_from_payload(payload: dict) -> str:
-    # keccak256 (not sha256) to match the hash primitive the on-chain
-    # registry and chain_utils.to_bytes32 already use, so vc_id and its
-    # on-chain bytes32 key are computed with one consistent hash function.
-    return "vcid:" + Web3.keccak(canonicalize(payload)).hex()
+    return "urn:vcid:" + Web3.keccak(canonicalize(payload)).hex()
 
-def make_vc(issuer_did: str, pubkey_b64: str, manifest_digest: str, contract_address: str,
-            chain_id: int, did_doc_cid: str, exp_secs: int = 3600*24*90):
+def make_vc(issuer_did: str, manifest_digest: str, contract_address: str,
+            chain_id: int, did_doc_cid: str, image_reference: str | None = None,
+            build_metadata: dict | None = None, exp_secs: int = 3600*24*90):
     now = int(time.time())
+    issued = datetime.fromtimestamp(now, timezone.utc).isoformat().replace("+00:00", "Z")
+    expires = datetime.fromtimestamp(now + exp_secs, timezone.utc).isoformat().replace("+00:00", "Z")
     payload = {
-        "type": ["VerifiableCredential", "OCIVerifiableImage"],
+        "@context": ["https://www.w3.org/2018/credentials/v1"],
+        "type": ["VerifiableCredential", "ContainerImageCredential"],
         "issuer": issuer_did,
-        "issuedAt": now,
-        "expiration": now + exp_secs,
+        "issuanceDate": issued,
+        "expirationDate": expires,
         "credentialSubject": {
-            "manifestDigest": manifest_digest,
-            # CBC = (chainId, contractAddress): both fields must be inside
-            # the signed payload, or a VC issued for one chain/contract
-            # pair can be replayed against a verifier expecting a
-            # different chain that happens to share a contract address.
-            "contractAddress": contract_address.lower(),
-            "chainId": chain_id,
-            "issuerPublicKeyBase64": pubkey_b64,
-            # Lets a verifier fetch the issuer's DID Document and tie the
-            # embedded signing key back to what was actually registered
-            # on-chain for this issuer, instead of trusting whatever key
-            # the VC itself claims to have been signed with.
+            "image": {
+                "manifestDigest": manifest_digest,
+                **({"reference": image_reference} if image_reference else {}),
+            },
+            "cbc": {
+                "chainId": chain_id,
+                "contractAddress": contract_address.lower(),
+            },
+            # Lets the verifier bind the resolved DID Document to the CID
+            # registered on-chain for this issuer.
             "didDocCid": did_doc_cid,
+            **({"buildMetadata": build_metadata} if build_metadata else {}),
         }
     }
     return payload
 
 def sign_vc(signer: Signer, payload: dict) -> VC:
     vcid = vc_id_from_payload(payload)
-    body = canonicalize(payload)
+    body = canonicalize({**payload, "proof": proof_options(payload)})
     sig = signer.sign(body)
     return VC(vc_id=vcid, payload=payload, signature=sig)
 
-def verify_vc(vc: VC) -> bool:
-    pub = vc.payload["credentialSubject"]["issuerPublicKeyBase64"]
-    body = canonicalize(vc.payload)
+def verify_vc(vc: VC, pub: str) -> bool:
+    body = canonicalize({**vc.payload, "proof": proof_options(vc.payload)})
     return verify_ed25519(pub, body, vc.signature)
+
+def proof_options(payload: dict) -> dict:
+    return {
+        "type": "Ed25519Signature2020",
+        "created": payload["issuanceDate"],
+        "verificationMethod": f'{payload["issuer"]}#key-1',
+        "proofPurpose": "assertionMethod",
+    }
+
+def parse_vc_time(value: str) -> int:
+    return int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp())
