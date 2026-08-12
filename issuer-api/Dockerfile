@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM python:3.13-slim-bookworm AS base
+FROM python:3.11-slim-bookworm AS base
 
 # ---- build stage: compile wheels for deps that need a C toolchain ----
 FROM base AS builder

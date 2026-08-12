@@ -10,7 +10,7 @@ const arbitrumSepoliaRpc = process.env.ARBITRUM_SEPOLIA_RPC;
 const deployerPk = process.env.DEPLOYER_PK;
 
 const config: HardhatUserConfig = {
-  solidity: "0.8.28",
+  solidity: "0.8.21",
   networks: {
     ...(arbitrumSepoliaRpc && deployerPk
       ? {
