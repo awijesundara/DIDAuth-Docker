@@ -1,4 +1,4 @@
-module github.com/example/vc-webhook
+module github.com/awijesundara/DIDAuth-Docker/k8s-webhook
 
 go 1.26.0
 

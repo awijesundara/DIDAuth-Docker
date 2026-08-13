@@ -1,8 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cat > Dockerfile <<'EOF'
-FROM busybox:latest
-CMD ["echo","hello, did/vc world"]
-EOF
-docker build -t local/demo:latest .
+REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+docker build -f "$REPO_ROOT/examples/demo-image/Dockerfile" -t local/demo:latest "$REPO_ROOT/examples/demo-image"
 echo "Built local/demo:latest"

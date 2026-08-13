@@ -1,12 +1,17 @@
 services:
   ipfs:
-    image: ipfs/kubo:latest
+    image: ipfs/kubo:v0.24.0
     container_name: didauth-ipfs
     ports:
       - "5001:5001"   # IPFS HTTP API
       - "8081:8080"   # IPFS gateway
     volumes:
       - ipfs-data:/data/ipfs
+    healthcheck:
+      test: ["CMD", "ipfs", "id"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 
   issuer-api:
     build: ./issuer-api
@@ -17,8 +22,18 @@ services:
       - ./issuer-api/.env
     environment:
       IPFS_API: http://ipfs:5001/api/v0
+      API_KEY_ENC_FILE: /data/secrets/api_key.enc
+    volumes:
+      - issuer-secrets:/data/secrets
     depends_on:
-      - ipfs
+      ipfs:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 
 volumes:
   ipfs-data:
+  issuer-secrets:

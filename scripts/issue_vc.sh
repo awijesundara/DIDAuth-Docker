@@ -2,7 +2,6 @@
 set -euo pipefail
 API="http://127.0.0.1:8080"
 KEY="${ISSUER_API_KEY:-supersecret}"
-CONTRACT="${CONTRACT_ADDRESS:?export CONTRACT_ADDRESS first}"
 DIGEST="${1:?pass manifest digest (e.g., sha256:abcd...)}"
 
 # Built with `jq -n` rather than shell-interpolated string literals: the
@@ -14,7 +13,7 @@ curl -sf -X POST "$API/did/register" -H "x-api-key: $KEY" -H "Content-Type: appl
   -d '{"did_doc":{"service":[]}}' >/dev/null
 
 curl -sf -X POST "$API/vc/issue" -H "x-api-key: $KEY" -H "Content-Type: application/json" \
-  -d "$(jq -n --arg d "$DIGEST" --arg c "$CONTRACT" '{manifest_digest:$d, contract_address:$c}')" \
+  -d "$(jq -n --arg d "$DIGEST" '{manifest_digest:$d}')" \
   | tee vc_issue.json
 
 VCID=$(jq -r .vc_id vc_issue.json)

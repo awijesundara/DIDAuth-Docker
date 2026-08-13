@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: vc-webhook
 spec:
-  replicas: 1
+  replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
       app: vc-webhook
@@ -20,6 +20,18 @@ spec:
           value: {{ .Values.verifierURL | quote }}
         ports:
         - containerPort: 8443
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8443
+            scheme: HTTPS
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8443
+            scheme: HTTPS
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
         volumeMounts:
         - name: tls
           mountPath: /tls

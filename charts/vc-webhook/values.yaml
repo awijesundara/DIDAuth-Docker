@@ -4,3 +4,17 @@ image:
 service:
   port: 443
 verifierURL: http://issuer-api:8080/vc/verify
+tls:
+  create: false
+tlsCert: ""
+tlsKey: ""
+caBundle: ""
+replicaCount: 2
+namespaceSelector: {}
+resources:
+  requests:
+    cpu: 100m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
