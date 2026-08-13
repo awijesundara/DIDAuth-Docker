@@ -7,6 +7,7 @@ webhooks:
   admissionReviewVersions: ["v1"]
   sideEffects: None
   failurePolicy: Fail
+  timeoutSeconds: 10
   clientConfig:
     service:
       name: vc-webhook
@@ -19,3 +20,5 @@ webhooks:
     apiVersions: ["v1"]
     operations: ["CREATE"]
     resources: ["pods"]
+  namespaceSelector:
+    {{- toYaml .Values.namespaceSelector | nindent 4 }}

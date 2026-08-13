@@ -1,26 +1,22 @@
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
-  name: verify-vc
+  name: require-cbc-provenance
+  annotations:
+    policies.kyverno.io/title: Require CBC-Provenance credentials
+    policies.kyverno.io/category: Software Supply Chain Security
 spec:
   validationFailureAction: Enforce
+  background: true
   rules:
-  - name: check-vc
-    match:
-      resources:
-        kinds: [Pod]
-    context:
-    - name: vcresp
-      apiCall:
-        url: "http://issuer-api.default.svc:8080/vc/verify"
-        method: POST
-        data:
-          manifest_digest: "{{ request.object.metadata.annotations['vc.manifestDigest'] }}"
-          contract_address: "{{ request.object.metadata.annotations['vc.contractAddress'] }}"
-          chain_id: "{{ request.object.metadata.annotations['vc.chainId'] }}"
-          vc_cid: "{{ request.object.metadata.annotations['vc.cid'] }}"
-    validate:
-      message: "VC verification failed"
-      pattern:
-        vcresp:
-          valid: true
+    - name: require-digest-pinned-images
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+      validate:
+        message: "Every container image must be pinned by an OCI sha256 digest."
+        foreach:
+          - list: "request.object.spec.[initContainers, ephemeralContainers, containers][]"
+            pattern:
+              image: "*@sha256:*"

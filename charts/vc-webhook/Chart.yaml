@@ -1,4 +1,6 @@
 apiVersion: v2
 name: vc-webhook
-version: 0.1.0
-appVersion: "0.1.0"
+description: Fail-closed CBC-Provenance admission enforcement for digest-pinned OCI images
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
