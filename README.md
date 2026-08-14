@@ -1,198 +1,239 @@
-# DID + VC Contract-Bound Container Image PoC
+# CBC-Provenance
 
-A proof-of-concept that binds a container image's OCI manifest digest to an
-issuing smart contract address inside a **Verifiable Credential (VC)**, so a
-Kubernetes admission controller can refuse to run an image unless a valid,
-non-revoked credential vouches for exactly that `(digest, contract)` pair.
+Contract-bound Verifiable Credentials for replay-resistant OCI image
+provenance in Kubernetes.
 
-## DID / VC mechanism
+CBC-Provenance binds an immutable OCI manifest digest to an
+operator-controlled Contract-Binding Context:
 
-- **Identity**: the issuer holds a single `did:web:<domain>` identity backed by
-  an Ed25519 keypair generated at runtime (`issuer-api/did_utils.py`). This is
-  a minimal, demo-grade DID method — no DID document resolution, no key
-  rotation ceremony, just a domain-scoped identifier plus a public key.
-- **Credential**: a VC is a JSON payload (`issuer`, `issuedAt`, `expiration`,
-  and a `credentialSubject` containing the OCI `manifestDigest` and the
-  `contractAddress` that is authoritative for that image) signed with the
-  issuer's Ed25519 key (`issuer-api/vc_utils.py`). The VC's id is the SHA-256
-  hash of its canonical JSON payload.
-- **Storage**: the signed VC (payload + proof) is pinned to IPFS
-  (`issuer-api/ipfs_utils.py`) and referenced everywhere else by its CID.
-- **Anchoring / revocation**: the VC id, issuer DID, and IPFS CID are recorded
-  on-chain in `DIDRegistry.sol` (Arbitrum Sepolia). Recording is idempotent
-  (`already recorded` guard) and revocation is one-way
-  (`already revoked` guard), so the contract is the source of truth for
-  "is this VC still good", not IPFS or the API's memory.
-- **Verification**: `POST /vc/verify` fetches the VC from IPFS, checks the
-  Ed25519 signature, checks that the manifest digest and contract address in
-  the credential match what the caller is asking about, and then checks
-  on-chain recorded/revoked state (cached for 5 minutes via `cachetools`).
-  A result is only `valid` if the signature checks out, the fields match, the
-  VC is recorded, and it has not been revoked.
-- **Enforcement**: a Kubernetes `ValidatingWebhook` (`k8s-webhook/main.go`)
-  reads `vc.cid` / `vc.manifestDigest` / `vc.contractAddress` annotations off
-  a `Pod` and calls `/vc/verify`; the pod is only admitted if the response
-  says `valid: true`. A Kyverno `ClusterPolicy` (`kyverno/vc-verify-policy.yaml`)
-  implements the same check declaratively, as an alternative to running the
-  Go webhook.
+```text
+CBC = (chainId, contractAddress)
+```
 
-## Repository layout
+The binding is inside a signed W3C Verifiable Credential. A Kubernetes
+admission request succeeds only when the image digest and CBC match, the
+Ed25519 proof resolves to the issuer's on-chain-bound DID Document, the VC is
+within its validity window, and its canonical identifier is recorded and not
+revoked on-chain.
 
-| Path | What it is |
-|---|---|
-| `contracts-hardhat/` | `DIDRegistry.sol` + Hardhat project to deploy/test it |
-| `issuer-api/` | FastAPI service: DID registration, VC issue/record/revoke/verify, Prometheus metrics |
-| `k8s-webhook/` | Go `ValidatingWebhook` admission server that calls `issuer-api`'s `/vc/verify` |
-| `charts/vc-webhook/` | Helm chart for deploying the Go webhook |
-| `kyverno/` | Kyverno `ClusterPolicy` alternative to the Go webhook |
-| `scripts/` | Demo helper scripts (issue/record/revoke a VC, build a demo image, replay-attack demo) |
+## Security properties
+
+- **Cross-context replay resistance:** a VC issued for one chain and contract
+  cannot be accepted by a verifier configured for another CBC.
+- **Artifact integrity:** every admitted image is referenced by an immutable
+  `name@sha256:<digest>` value and checked against the signed VC.
+- **Issuer authenticity:** the verifier binds the Ed25519 verification key to
+  the DID Document CID registered on-chain.
+- **Lifecycle enforcement:** unrecorded, expired, not-yet-valid, and revoked
+  VCs fail admission.
+- **Fail-closed operation:** verifier errors, dependency timeouts, malformed
+  images, missing credentials, and webhook unavailability deny admission.
+- **Bounded revocation freshness:** the default 30-second cache gives the
+  manuscript bound `Δ = t_finality + TTL_cache + ε_network`.
+
+`chainId` and `contractAddress` are derived from the issuer/verifier's RPC and
+deployment configuration. They are never trusted from Pod annotations or an
+untrusted verification request.
 
 ## Architecture
 
 ```mermaid
-flowchart TB
-    subgraph chain["Arbitrum Sepolia"]
-        Registry["DIDRegistry.sol\n(register / record / revoke)"]
-    end
-
-    subgraph storage["IPFS"]
-        Kubo["ipfs/kubo\n(pinned VC JSON)"]
-    end
-
-    subgraph api["issuer-api (FastAPI)"]
-        Issuer["/did/register\n/vc/issue\n/vc/record\n/vc/revoke\n/vc/verify"]
-    end
-
-    subgraph k8s["Kubernetes cluster"]
-        Admission["k8s-webhook\nValidatingWebhook (Go, :8443)"]
-        Kyverno["Kyverno ClusterPolicy\n(alternative to the Go webhook)"]
-        Pod["Pod being admitted\n(annotated with vc.cid,\nvc.manifestDigest, vc.contractAddress)"]
-        APIServer["kube-apiserver"]
-    end
-
-    Operator["Operator / CI\n(scripts/issue_vc.sh, revoke_vc.sh)"]
-
-    Operator -- "1. register DID" --> Issuer
-    Issuer -- "registerDID(issuerDid, didDocCid)" --> Registry
-    Operator -- "2. issue VC for image digest" --> Issuer
-    Issuer -- "pin signed VC" --> Kubo
-    Operator -- "3. record VC" --> Issuer
-    Issuer -- "recordVC(vcId, issuerDid, cid)" --> Registry
-
-    APIServer -- "AdmissionReview" --> Admission
-    APIServer -- "apiCall" --> Kyverno
-    Admission -- "POST /vc/verify" --> Issuer
-    Kyverno -- "POST /vc/verify" --> Issuer
-    Issuer -- "fetch VC by CID" --> Kubo
-    Issuer -- "isVCRecorded / isVCRevoked" --> Registry
-    Admission -- "allow/deny" --> Pod
-    Kyverno -- "allow/deny" --> Pod
-
-    Operator -- "4. revoke VC" --> Issuer
+flowchart LR
+    CI[Maintainer or CI] -->|register DID; issue, record, revoke VC| API[Issuer API]
+    API -->|DID Document and signed VC| IPFS[(IPFS/Kubo)]
+    API -->|lifecycle transactions| L2[DIDRegistry on Arbitrum]
+    K8S[Kubernetes API server] -->|AdmissionReview| WH[Validating webhook]
+    WH -->|digest and VC CID| API
+    API -->|retrieve by CID| IPFS
+    API -->|DID, membership, revocation| L2
+    API -->|valid or fail closed| WH
 ```
 
-## Prerequisites
+| Component | Responsibility |
+|---|---|
+| `contracts-hardhat/` | Per-DID ownership/delegation, DID Document anchoring, batch VC recording, status, and revocation |
+| `issuer-api/` | `did:key` lifecycle, URDNA2015 canonicalization, Ed25519Signature2020 proof, IPFS, Web3, verification, metrics |
+| `k8s-webhook/` | TLS 1.3 admission endpoint; verifies every init, application, and ephemeral container |
+| `charts/vc-webhook/` | Fail-closed, two-replica Helm deployment |
+| `kyverno/` | Digest-pinning policy complementing cryptographic webhook enforcement |
+| `scripts/` | Issuance, recording, revocation, digest extraction, replay, and load utilities |
 
-- Docker and Docker Compose (v2 `docker compose`)
-- Node.js 22+ (only needed to deploy/redeploy the contract)
-- An Arbitrum Sepolia RPC endpoint and a funded deployer private key
-- `jq` (used by the demo scripts)
+## Credential profile
 
-## 1) Deploy the contract
+VCs follow the W3C VC Data Model v1.1 shape and use `did:key` with Ed25519:
+
+```json
+{
+  "@context": ["https://www.w3.org/2018/credentials/v1"],
+  "type": ["VerifiableCredential", "ContainerImageCredential"],
+  "issuer": "did:key:z...",
+  "credentialSubject": {
+    "image": {
+      "manifestDigest": "sha256:...",
+      "reference": "registry.example/app@sha256:..."
+    },
+    "cbc": {
+      "chainId": 421614,
+      "contractAddress": "0x..."
+    },
+    "didDocCid": "bafy..."
+  },
+  "issuanceDate": "2026-08-21T00:00:00Z",
+  "expirationDate": "2026-11-19T00:00:00Z",
+  "proof": {
+    "type": "Ed25519Signature2020",
+    "verificationMethod": "did:key:z...#key-1",
+    "proofPurpose": "assertionMethod",
+    "proofValue": "z..."
+  }
+}
+```
+
+The stable VC identifier is
+`keccak256(URDNA2015(VC_without_proof))`. The proof covers the canonicalized VC
+and deterministic proof options. Remote JSON-LD context retrieval is disabled;
+the supported VC context is resolved locally to avoid network-dependent
+canonicalization.
+
+## Quick start
+
+### 1. Deploy the registry
 
 ```bash
 cd contracts-hardhat
-cp .env.example .env   # fill ARBITRUM_SEPOLIA_RPC and DEPLOYER_PK
+cp .env.example .env
 npm install
 npm run build
 npm run deploy:arb
-# note the printed address, export it as CONTRACT_ADDRESS in your shell
 ```
 
-## 2) Run IPFS + the issuer API with Docker Compose
+Configure `ARBITRUM_SEPOLIA_RPC` and `DEPLOYER_PK` before deployment. Record the
+deployed address.
+
+### 2. Configure the issuer
 
 ```bash
 cp issuer-api/.env.example issuer-api/.env
-# edit issuer-api/.env: RPC_URL, CONTRACT_ADDRESS, DEPLOYER_PK, ISSUER_API_KEY
+```
+
+Set at least:
+
+```dotenv
+RPC_URL=https://your-arbitrum-sepolia-rpc
+CONTRACT_ADDRESS=0xYourDeployedRegistry
+DEPLOYER_PK=0xYourAuthorizedDIDControllerKey
+ISSUER_API_KEY=replace-this-value
+IPFS_API=http://ipfs:5001/api/v0
+```
+
+The API key protects lifecycle writes. Use mTLS or an authenticated private
+network in production and configure the encrypted key file variables in the
+example environment.
+
+### 3. Start IPFS and the API
+
+```bash
 docker compose up -d --build
+curl --fail http://127.0.0.1:8080/health
 ```
 
-This starts two containers:
-
-- `didauth-ipfs` — `ipfs/kubo`, HTTP API on `localhost:5001`, gateway on `localhost:8081`
-- `didauth-issuer-api` — the FastAPI service, built from `issuer-api/Dockerfile`
-  (Python 3.13-slim, multi-stage build, runs as a non-root user), listening on
-  `localhost:8080`, pointed at the `ipfs` service on the compose network
-
-To run the API directly on the host instead (e.g. for local development):
+### 4. Issue and record a credential
 
 ```bash
-cd issuer-api
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app:app --reload --port 8080
-```
-
-## 3) Build a demo image & get its OCI digest
-
-```bash
-./scripts/build_demo_image.sh
-DIGEST=$(./scripts/extract_digest.sh local/demo:latest)
-export CONTRACT_ADDRESS=0x<your-deployed-registry>
-export ISSUER_API_KEY=supersecret
-```
-
-## 4) Issue + record a VC
-
-```bash
+DIGEST=$(./scripts/extract_digest.sh registry.example/app:release)
 ./scripts/issue_vc.sh "$DIGEST"
-# writes vc_issue.json with vc_id and ipfs_cid
 ```
 
-## 5) Verify and revoke
+The script registers the issuer DID, issues and pins the VC, then records its
+canonical identifier on-chain. Separate record and revoke utilities are also
+provided.
 
-```bash
-CID=$(jq -r .ipfs_cid vc_issue.json)
-curl -s -X POST http://127.0.0.1:8080/vc/verify -H "Content-Type: application/json" \
-  -d "{\"manifest_digest\":\"$DIGEST\",\"contract_address\":\"$CONTRACT_ADDRESS\",\"vc_cid\":\"$CID\"}" | jq .
+### 5. Annotate a digest-pinned workload
 
-VCID=$(jq -r .vc_id vc_issue.json)
-./scripts/revoke_vc.sh "$VCID"
+For a Pod with one image:
 
-curl -s -X POST http://127.0.0.1:8080/vc/verify -H "Content-Type: application/json" \
-  -d "{\"manifest_digest\":\"$DIGEST\",\"contract_address\":\"$CONTRACT_ADDRESS\",\"vc_cid\":\"$CID\"}" | jq .
+```yaml
+metadata:
+  annotations:
+    cbc.provenance/vc: bafyYourCredentialCid
+spec:
+  containers:
+    - name: app
+      image: registry.example/app@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ```
 
-## 6) Deploy the admission webhook (optional, requires a Kubernetes cluster)
+For multiple images, use one annotation per container name:
+
+```yaml
+cbc.provenance/vc-app: bafyAppCredential
+cbc.provenance/vc-sidecar: bafySidecarCredential
+```
+
+This convention applies to init and ephemeral containers as well.
+
+### 6. Install admission enforcement
 
 ```bash
-docker build -t <registry>/vc-webhook:latest ./k8s-webhook
-docker push <registry>/vc-webhook:latest
-# create the vc-webhook-tls secret (see k8s-webhook/manifests/tls-bootstrap.yaml
-# for the CSR bootstrap flow), then:
 helm install vc-webhook charts/vc-webhook \
-  --set image.repository=<registry>/vc-webhook \
-  --set verifierURL=http://issuer-api.default.svc:8080/vc/verify
+  --set image.repository=registry.example/cbc-provenance-webhook \
+  --set verifierURL=http://issuer-api.default.svc:8080/vc/verify \
+  --set caBundle='<base64-encoded-CA-bundle>'
+
+kubectl apply -f kyverno/vc-verify-policy.yaml
 ```
 
-Or apply `kyverno/vc-verify-policy.yaml` instead if you'd rather enforce this
-with Kyverno than run the Go webhook.
+Provision the TLS secret using
+`k8s-webhook/manifests/tls-bootstrap.yaml` or your certificate manager.
 
-## Metrics
+## API
 
-`issuer-api` exposes Prometheus metrics at `GET /metrics`:
-`vc_verify_requests_total`, `vc_verify_failures_total`,
-`vc_verify_duration_seconds`, `vc_verify_cache_hits_total`.
+| Endpoint | Authentication | Purpose |
+|---|---|---|
+| `POST /did/register` | API key | Generate and register a `did:key` DID Document |
+| `POST /vc/issue` | API key | Issue, sign, and pin a contract-bound VC |
+| `POST /vc/record` | API key | Record a VC identifier and CID on-chain |
+| `POST /vc/revoke` | API key | Revoke a recorded VC |
+| `POST /apikey/rotate` | API key | Rotate the encrypted lifecycle API key |
+| `POST /vc/verify` | cluster-internal | Verify digest, CBC, proof, DID binding, time, and status |
+| `GET /health` | none | Liveness/readiness response |
+| `GET /metrics` | deployment policy | Prometheus metrics |
 
-## Notes / limitations
+## Operational parameters
 
-- This is a PoC. The `did:web`-style identity and Ed25519 signing scheme are
-  minimal by design — swap in your production DID method and key management
-  (a `KMSSigner` stub exists in `issuer-api/signer.py` for that purpose).
-- IPFS responses are trusted as-is by CID; CID tampering breaks integrity by
-  construction, but there is no additional pinning/availability guarantee
-  beyond whatever your `ipfs/kubo` node provides.
-- `web3.py` was deliberately kept on the 6.x line (bumped to the latest 6.20.x
-  patch) rather than jumped to 7.x, since the on-chain code paths
-  (`chain_utils.py`) could not be exercised against a live RPC endpoint in this
-  environment and 7.x renames several attributes used here.
+| Parameter | Default | Manuscript role |
+|---|---:|---|
+| `CLOCK_SKEW_SECS` | 5 | Timestamp tolerance `δ` |
+| `REVOCATION_CACHE_TTL_SECS` | 30 | TTL component of revocation bound `Δ` |
+| `EXTERNAL_REQUEST_TIMEOUT_SECS` | 5 | Fail-closed IPFS timeout |
+| Webhook verifier timeout | 5 s | Fail-closed admission dependency timeout |
+| Webhook replicas | 2 | Minimum production posture |
+
+## Threat model and limitations
+
+The project addresses image tampering, cross-context replay, credential
+forgery, stale revocation, metadata leakage, downgrade policy, and admission
+TOCTOU as described in [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md).
+
+Maintainer-key compromise, a compromised verifier binary, total Kubernetes
+control-plane compromise, build-system compromise, and sustained IPFS/RPC
+unavailability remain outside the cryptographic guarantee. KMS/HSM signing is
+represented by an interface but requires a provider-specific implementation.
+IPFS provides content integrity, while availability still requires redundant
+pinning and gateways.
+
+Performance and gas figures in the manuscript describe its reported Arbitrum
+Sepolia and Kubernetes experiments; they are not regenerated automatically by
+this repository and should not be presented as measurements of another
+environment without rerunning the published methodology.
+
+## Development checks
+
+```bash
+cd contracts-hardhat && npm test
+cd ../issuer-api && pytest
+cd ../k8s-webhook && go test ./...
+```
+
+CI compiles and tests the contract, builds the webhook and API container, and
+publishes the webhook image. Contract deployment is manual through the
+workflow dispatcher because it changes external blockchain state.
