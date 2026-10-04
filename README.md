@@ -2,6 +2,15 @@
 
 Containerised reference deployment of **CBC-Provenance** (Helm chart, Hardhat contracts, issuer API and Kubernetes admission webhook). The design overview follows.
 
+[![CI](https://github.com/awijesundara/DIDAuth-Docker/actions/workflows/ci.yml/badge.svg)](https://github.com/awijesundara/DIDAuth-Docker/actions/workflows/ci.yml)
+[![Last commit](https://img.shields.io/github/last-commit/awijesundara/DIDAuth-Docker/main)](https://github.com/awijesundara/DIDAuth-Docker/commits/main)
+[![Top language](https://img.shields.io/github/languages/top/awijesundara/DIDAuth-Docker)](https://github.com/awijesundara/DIDAuth-Docker)
+[![Code size](https://img.shields.io/github/languages/code-size/awijesundara/DIDAuth-Docker)](https://github.com/awijesundara/DIDAuth-Docker)
+[![Solidity](https://img.shields.io/badge/Solidity-0.8.21-363636?logo=solidity&logoColor=white)](contracts-hardhat)
+[![Go](https://img.shields.io/badge/Go-webhook-00ADD8?logo=go&logoColor=white)](k8s-webhook)
+[![Python](https://img.shields.io/badge/Python-issuer%20API-3776AB?logo=python&logoColor=white)](issuer-api)
+[![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm-326CE5?logo=kubernetes&logoColor=white)](charts/vc-webhook)
+
 Contract-bound Verifiable Credentials for replay-resistant OCI image
 provenance in Kubernetes.
 
@@ -17,15 +26,6 @@ admission request succeeds only when the image digest and CBC match, the
 Ed25519 proof resolves to the issuer's on-chain-bound DID Document, the VC is
 within its validity window, and its canonical identifier is recorded and not
 revoked on-chain.
-
-[![CI](https://github.com/awijesundara/DIDAuth-Docker/actions/workflows/ci.yml/badge.svg)](https://github.com/awijesundara/DIDAuth-Docker/actions/workflows/ci.yml)
-[![Last commit](https://img.shields.io/github/last-commit/awijesundara/DIDAuth-Docker/main)](https://github.com/awijesundara/DIDAuth-Docker/commits/main)
-[![Top language](https://img.shields.io/github/languages/top/awijesundara/DIDAuth-Docker)](https://github.com/awijesundara/DIDAuth-Docker)
-[![Code size](https://img.shields.io/github/languages/code-size/awijesundara/DIDAuth-Docker)](https://github.com/awijesundara/DIDAuth-Docker)
-[![Solidity](https://img.shields.io/badge/Solidity-0.8.21-363636?logo=solidity&logoColor=white)](contracts-hardhat)
-[![Go](https://img.shields.io/badge/Go-webhook-00ADD8?logo=go&logoColor=white)](k8s-webhook)
-[![Python](https://img.shields.io/badge/Python-issuer%20API-3776AB?logo=python&logoColor=white)](issuer-api)
-[![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm-326CE5?logo=kubernetes&logoColor=white)](charts/vc-webhook)
 
 ## Security properties
 
@@ -257,6 +257,6 @@ workflow dispatcher because it changes external blockchain state.
 | Lines of code (non-blank) | 1,382 |
 | Languages | Python 659, YAML 283, Go 174, Solidity 104, TypeScript 89 |
 | Automated tests | 14 |
-| Commits | 13 |
+| Commits | 14 |
 
 CI compiles and tests the contracts, tests and builds the Go webhook, tests the issuer API and builds both container images on every push. Publishing the webhook image is a manual workflow run.
