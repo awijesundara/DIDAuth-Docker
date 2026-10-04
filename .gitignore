@@ -7,3 +7,4 @@ issuer-api/tests/__pycache__/
 issuer-api/.pytest_cache/
 k8s-webhook/vc-webhook
 .DS_Store
+k8s-webhook/k8s-webhook
