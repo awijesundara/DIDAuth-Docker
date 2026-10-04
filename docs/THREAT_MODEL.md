@@ -1,6 +1,6 @@
 # Threat model
 
-This document defines the security boundary implemented by CBC-Provenance. It
+This document defines the security boundary implemented by DIDAuth-K8s. It
 tracks Section 4 and Table 3 of the accompanying manuscript.
 
 ## Protected assets

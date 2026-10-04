@@ -1,6 +1,6 @@
 # DIDRegistry
 
-The Solidity 0.8.21 registry is the on-chain trust anchor for CBC-Provenance.
+The Solidity 0.8.21 registry is the on-chain trust anchor for DIDAuth-K8s.
 It stores content hashes rather than credential JSON and supports:
 
 - DID registration and DID Document CID updates;

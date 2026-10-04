@@ -81,7 +81,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Set lowercase image name
         # ghcr.io tags must be all-lowercase; github.repository preserves
-        # the repo's actual case (DIDAuth-Docker). Keep the image as a
+        # the repo's actual case (DIDAuth-K8s). Keep the image as a
         # top-level owner package so GITHUB_TOKEN can create and publish it.
         run: echo "IMAGE_NAME=$(echo '${{ github.repository_owner }}/didauth-docker-vc-webhook' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
       - uses: docker/build-push-action@v6

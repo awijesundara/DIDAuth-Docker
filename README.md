@@ -1,11 +1,11 @@
-# DIDAuth-Docker
+# DIDAuth-K8s
 
-Containerised reference deployment of **CBC-Provenance** (Helm chart, Hardhat contracts, issuer API and Kubernetes admission webhook). The design overview follows.
+Containerised reference deployment of **DIDAuth-K8s** (Helm chart, Hardhat contracts, issuer API and Kubernetes admission webhook). The design overview follows.
 
-[![CI](https://github.com/awijesundara/DIDAuth-Docker/actions/workflows/ci.yml/badge.svg)](https://github.com/awijesundara/DIDAuth-Docker/actions/workflows/ci.yml)
-[![Last commit](https://img.shields.io/github/last-commit/awijesundara/DIDAuth-Docker/main)](https://github.com/awijesundara/DIDAuth-Docker/commits/main)
-[![Top language](https://img.shields.io/github/languages/top/awijesundara/DIDAuth-Docker)](https://github.com/awijesundara/DIDAuth-Docker)
-[![Code size](https://img.shields.io/github/languages/code-size/awijesundara/DIDAuth-Docker)](https://github.com/awijesundara/DIDAuth-Docker)
+[![CI](https://github.com/awijesundara/DIDAuth-K8s/actions/workflows/ci.yml/badge.svg)](https://github.com/awijesundara/DIDAuth-K8s/actions/workflows/ci.yml)
+[![Last commit](https://img.shields.io/github/last-commit/awijesundara/DIDAuth-K8s/main)](https://github.com/awijesundara/DIDAuth-K8s/commits/main)
+[![Top language](https://img.shields.io/github/languages/top/awijesundara/DIDAuth-K8s)](https://github.com/awijesundara/DIDAuth-K8s)
+[![Code size](https://img.shields.io/github/languages/code-size/awijesundara/DIDAuth-K8s)](https://github.com/awijesundara/DIDAuth-K8s)
 [![Solidity](https://img.shields.io/badge/Solidity-0.8.21-363636?logo=solidity&logoColor=white)](contracts-hardhat)
 [![Go](https://img.shields.io/badge/Go-webhook-00ADD8?logo=go&logoColor=white)](k8s-webhook)
 [![Python](https://img.shields.io/badge/Python-issuer%20API-3776AB?logo=python&logoColor=white)](issuer-api)
@@ -14,7 +14,7 @@ Containerised reference deployment of **CBC-Provenance** (Helm chart, Hardhat co
 Contract-bound Verifiable Credentials for replay-resistant OCI image
 provenance in Kubernetes.
 
-CBC-Provenance binds an immutable OCI manifest digest to an
+DIDAuth-K8s binds an immutable OCI manifest digest to an
 operator-controlled Contract-Binding Context:
 
 ```text
