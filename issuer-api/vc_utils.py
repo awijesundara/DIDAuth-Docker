@@ -12,6 +12,9 @@ class VC:
     payload: dict
     signature: str
 
+# The vocabulary IRIs keep the original "cbc-provenance" namespace: they are part of
+# every canonicalized, signed credential, so renaming them would change each vcId and
+# invalidate credentials already issued and recorded on chain.
 _VC_CONTEXT = {
     "id": "@id", "type": "@type",
     "VerifiableCredential": "https://www.w3.org/2018/credentials#VerifiableCredential",

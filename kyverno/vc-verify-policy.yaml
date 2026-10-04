@@ -1,9 +1,9 @@
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
-  name: require-cbc-provenance
+  name: require-didauth-k8s
   annotations:
-    policies.kyverno.io/title: Require CBC-Provenance credentials
+    policies.kyverno.io/title: Require DIDAuth-K8s credentials
     policies.kyverno.io/category: Software Supply Chain Security
 spec:
   validationFailureAction: Enforce

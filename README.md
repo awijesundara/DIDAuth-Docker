@@ -186,7 +186,7 @@ This convention applies to init and ephemeral containers as well.
 
 ```bash
 helm install vc-webhook charts/vc-webhook \
-  --set image.repository=registry.example/cbc-provenance-webhook \
+  --set image.repository=registry.example/didauth-k8s-webhook \
   --set verifierURL=http://issuer-api.default.svc:8080/vc/verify \
   --set caBundle='<base64-encoded-CA-bundle>'
 

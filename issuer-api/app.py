@@ -24,7 +24,7 @@ if not CONTRACT_ADDRESS:
 CLOCK_SKEW_SECS = int(os.getenv("CLOCK_SKEW_SECS", "5"))
 
 app = FastAPI(
-    title="CBC-Provenance Issuer and Verifier",
+    title="DIDAuth-K8s Issuer and Verifier",
     description="Contract-bound OCI image provenance for Kubernetes admission.",
     version="1.0.0",
 )

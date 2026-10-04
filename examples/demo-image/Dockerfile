@@ -1,2 +1,2 @@
 FROM busybox:latest
-CMD ["echo", "hello, CBC-Provenance"]
+CMD ["echo", "hello, DIDAuth-K8s"]

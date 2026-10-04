@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.21;
 
-/// @title CBC-Provenance DID and Verifiable Credential Registry
+/// @title DIDAuth-K8s DID and Verifiable Credential Registry
 /// @notice Anchors DID Documents and the lifecycle of contract-bound OCI VCs.
 contract DIDRegistry {
     struct DIDRecord {
